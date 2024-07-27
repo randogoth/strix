@@ -12,7 +12,18 @@ Windows:
 
 ## FPGA Development
 
-- In Quartus > Open Project > select `strix.qpf` from the `fpga/src` directory in this repo.
+- Intel Quartus
+    - Open Project > select `strix.qpf` from the `fpga/src` directory in this repo.
+
+## MCU Development
+
+- Arduino IDE
+    - Boards Manager > Install 'Arduino SAMD Boards' (search for 'Vidor 4000')
+    - Library Manager > Install
+        - VidorPeripherals
+        - WiFiNINA (1.8.5, not higher)
+    - Open Project > `strix.ino` from the `arduino/strix` directory in this repo
+
 
 ## TODO
 
