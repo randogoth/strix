@@ -3,136 +3,148 @@
 
 char ssid[] = "Strix";
 char pass[] = "owl12345678";
-int led =  LED_BUILTIN;
+const int led = LED_BUILTIN;
+const int rngPins[] = {A1, A2, A3, A4}; // Array of RNG pins
+const int numPins = 4;
 int status = WL_IDLE_STATUS;
 WiFiServer server(80);
 
+const int CHUNK_SIZE = 1000;  // Adjust this value as needed
+
 void setup() {
-  //Initialize serial and wait for port to open:
   Serial.begin(9600);
   while (!Serial) {
-    ; // wait for serial port to connect. Needed for native USB port only
+    ; // Wait for serial port to connect. Needed for native USB port only
   }
 
   Serial.println("Access Point Web Server");
 
-  pinMode(led, OUTPUT);      // set the LED pin mode
+  pinMode(led, OUTPUT); // Set the LED pin mode
+  digitalWrite(led, HIGH); // Ensure LED is off at boot
 
-  // check for the WiFi module:
+  for (int i = 0; i < numPins; i++) {
+    pinMode(rngPins[i], INPUT);  // Set the RNG pin modes
+  }
+
+  // Check for the WiFi module
   if (WiFi.status() == WL_NO_MODULE) {
     Serial.println("Communication with WiFi module failed!");
-    // don't continue
     while (true);
   }
 
-  // by default the local IP address will be 192.168.4.1
-  // you can override it with the following:
-  // WiFi.config(IPAddress(10, 0, 0, 1));
-
-  // print the network name (SSID);
+  // Print the network name (SSID)
   Serial.print("Creating access point named: ");
   Serial.println(ssid);
 
-  // Create open network. Change this line if you want to create an WEP network:
+  // Create open network
   status = WiFi.beginAP(ssid, pass);
   if (status != WL_AP_LISTENING) {
     Serial.println("Creating access point failed");
-    // don't continue
     while (true);
   }
 
-  // wait 10 seconds for connection:
+  // Wait 10 seconds for connection
   delay(10000);
 
-  // start the web server on port 80
+  // Start the web server on port 80
   server.begin();
 
-  // you're connected now, so print out the status
+  // Print WiFi status
   printWiFiStatus();
 }
 
-
 void loop() {
-  // compare the previous status to the current status
   if (status != WiFi.status()) {
-    // it has changed update the variable
     status = WiFi.status();
-
     if (status == WL_AP_CONNECTED) {
-      // a device has connected to the AP
       Serial.println("Device connected to AP");
     } else {
-      // a device has disconnected from the AP, and we are back in listening mode
       Serial.println("Device disconnected from AP");
     }
   }
- 
-  WiFiClient client = server.available();   // listen for incoming clients
 
-  if (client) {                             // if you get a client,
-    digitalWrite(led, LOW);
-    Serial.println("new client");           // print a message out the serial port
-    String currentLine = "";                // make a String to hold incoming data from the client
-    while (client.connected()) {            // loop while the client's connected
-      delayMicroseconds(10);                // This is required for the Arduino Nano RP2040 Connect - otherwise it will loop so fast that SPI will never be served.
-      if (client.available()) {             // if there's bytes to read from the client,
-        char c = client.read();             // read a byte, then
-        Serial.write(c);                    // print it out to the serial monitor
-        if (c == '\n') {                    // if the byte is a newline character
+  WiFiClient client = server.available();
+  if (client) {
+    String request = client.readStringUntil('\r');
+    client.flush();
 
-          // if the current line is blank, you got two newline characters in a row.
-          // that's the end of the client HTTP request, so send a response:
-          if (currentLine.length() == 0) {
-            // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
-            // and a content-type so the client knows what's coming, then a blank line:
-            client.println("HTTP/1.1 200 OK");
-            client.println("Content-type:text/html");
-            client.println();
+    // Check if the request is a GET request and contains "length"
+    if (request.indexOf("GET") >= 0 && request.indexOf("length=") >= 0) {
+      int lengthIndex = request.indexOf("length=") + 7;
+      int lengthEndIndex = request.indexOf(" ", lengthIndex);
+      String lengthString = request.substring(lengthIndex, lengthEndIndex);
+      int length = lengthString.toInt();
 
-            // the content of the HTTP response follows the header:
-            client.print("STRIX");
+      // Send the response to the client in chunks
+      client.println("HTTP/1.1 200 OK");
+      client.println("Content-Type: text/plain");
+      client.println("Connection: close");
+      client.println();
 
-            // The HTTP response ends with another blank line:
-            client.println();
-            // break out of the while loop:
-            break;
-          }
-          else {      // if you got a newline, then clear currentLine:
-            currentLine = "";
-          }
-        }
-        else if (c != '\r') {    // if you got anything else but a carriage return character,
-          currentLine += c;      // add it to the end of the currentLine
-        }
-
-        // Check to see if the client request was "GET /H" or "GET /L":
-        if (currentLine.endsWith("GET /H")) {
-          ;
-        }
-        if (currentLine.endsWith("GET /L")) {
-          ;
-        }
-      }
+      sendRandomHex(client, length);
     }
-    // close the connection:
+    delay(1);
     client.stop();
-    digitalWrite(led, HIGH);
-    Serial.println("client disconnected");
   }
 }
 
+void sendRandomHex(WiFiClient &client, int length) {
+  int bitsNeeded = length * 8;
+  int byteValue[numPins] = {0};
+  int bitCount = 0;
+
+  char hexBuffer[CHUNK_SIZE * 2 + 1];  // Buffer to hold the hex representation of the chunk
+  int bufferIndex = 0;
+
+  for (int i = 0; i < bitsNeeded; i += numPins) {
+    for (int j = 0; j < numPins; j++) {
+      int bit = analogRead(rngPins[j]) & 1; // Read the least significant bit from each pin
+      byteValue[j] = (byteValue[j] << 1) | bit;
+
+      // Blink LED according to the bit value from A1
+      if (j == 0) { // Only for A1
+        digitalWrite(led, bit ? LOW : HIGH);
+      }
+    }
+    bitCount++;
+
+    if (bitCount == 8) {
+      for (int j = 0; j < numPins; j++) {
+        snprintf(hexBuffer + bufferIndex, 3, "%02X", byteValue[j]); // Convert byte to hex string
+        bufferIndex += 2;
+        byteValue[j] = 0;
+      }
+      bitCount = 0;
+    }
+
+    // Send the data in chunks to avoid memory overflow
+    if (bufferIndex >= CHUNK_SIZE * 2) {
+      digitalWrite(led, HIGH);
+      hexBuffer[bufferIndex] = '\0';
+      client.print(hexBuffer);
+      bufferIndex = 0;
+    }
+  }
+
+  // Ensure any remaining data is sent
+  if (bufferIndex > 0) {
+    digitalWrite(led, HIGH);
+    hexBuffer[bufferIndex] = '\0';
+    client.print(hexBuffer);
+  }
+
+  // Ensure all data is sent
+  client.flush();
+}
+
 void printWiFiStatus() {
-  // print the SSID of the network you're attached to:
   Serial.print("SSID: ");
   Serial.println(WiFi.SSID());
 
-  // print your WiFi shield's IP address:
   IPAddress ip = WiFi.localIP();
   Serial.print("IP Address: ");
   Serial.println(ip);
 
-  // print where to go in a browser:
   Serial.print("To see this page in action, open a browser to http://");
   Serial.println(ip);
-
 }
